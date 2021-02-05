@@ -1,0 +1,90 @@
+#!/bin/bash
+
+mkdir -p /Library/Logs/VMWareVMNETMonitor
+LOG_FILE="/Library/Logs/VMWareVMNETMonitor/swi_vmnet_monitor.log"
+
+date > $LOG_FILE
+debug_echo() {
+    echo "$@" >> $LOG_FILE
+}
+
+debug_cat() {
+    cat "$@" >> $LOG_FILE
+}
+
+parse_tuns() {
+    debug_echo parse_tuns $1
+    ifconfig | grep -i "utun.: flags" | while read -r line ; do
+        TUN=$(echo $line | awk '{print $1;}')
+        TUN="${TUN%%:*}"
+        debug_echo parse_tuns TUN: $TUN
+        echo "nat on $TUN inet from $1 to any -> ($TUN) extfilter ei"
+    done
+}
+
+parse_netmask() {
+    debug_echo parse_netmask: $1 $2 $3
+    bits=0
+    for octet in $(echo $3| sed 's/\./ /g'); do
+        binbits=$(echo "obase=2; ibase=10; ${octet}"| bc | sed 's/0//g')
+        let bits+=${#binbits}
+    done
+    echo "${bits}"
+}
+
+parse_subnet() {
+    debug_echo parse_subnet: $1 $2 $3
+    echo $3
+}
+
+parse_nets() {
+    until [ -z $1 ]; do
+        debug_echo parse_nets: $1 $2 $3
+        NET=${2:0:6}
+        debug_echo parse_nets NET: $NET
+        shift; shift; shift
+        SUBNET=$(cat /Library/Preferences/VMware\ Fusion/networking | grep $NET"_HOSTONLY_SUBNET")
+        SUBNET=$(parse_subnet $SUBNET)
+        debug_echo parse_nets SUBNET: $SUBNET
+        NETMASK=$(cat /Library/Preferences/VMware\ Fusion/networking | grep $NET"_HOSTONLY_NETMASK")
+        NETMASK=$(parse_netmask $NETMASK)
+        parse_tuns $SUBNET/$NETMASK
+    done
+}
+
+reset_pfctl() {
+    TEMP_NAME=$(mktemp)
+    pfctl -a com.apple.internet-sharing/shared_v4 -s nat 2>/dev/null | grep -e "nat on" -e "no nat" | grep -v utun. > $TEMP_NAME
+    NATS=$(cat /Library/Preferences/VMware\ Fusion/networking | grep "_NAT yes")
+    debug_echo reset_pfctl
+    parse_nets $NATS >> $TEMP_NAME
+    if ifconfig | grep -q utun4; then
+        debug_echo "add your vpn rules here if any"
+        #cat /etc/pf.anchors/forwarding.vpn >> $TEMP_NAME
+    fi
+    debug_echo reset_pfctl content:
+    debug_cat $TEMP_NAME
+    pfctl -df $TEMP_NAME
+    pfctl -evf $TEMP_NAME
+    rm -f $TEMP_NAME
+}
+
+debug_echo 1
+reset_pfctl
+sleep 1
+
+debug_echo 2
+reset_pfctl
+sleep 1
+
+debug_echo 3
+reset_pfctl
+sleep 1
+
+debug_echo 4
+reset_pfctl
+sleep 1
+
+debug_echo 5
+reset_pfctl
+sleep 1
